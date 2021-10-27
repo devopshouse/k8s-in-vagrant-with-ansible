@@ -1,0 +1,6 @@
+---
+# tasks file for install-kubernetes
+- include: 01-config-kernel.yml
+- include: 02-disable-swap.yml
+- include: 03-config-repos.yml
+- include: 04-install-pkgs.yml

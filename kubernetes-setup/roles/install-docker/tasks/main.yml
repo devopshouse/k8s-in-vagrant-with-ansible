@@ -1,0 +1,5 @@
+---
+# tasks file for install-docker
+- include: 01-config-repos.yml
+- include: 02-install-pkgs.yml
+- include: 03-configure.yml

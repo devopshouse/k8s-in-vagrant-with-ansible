@@ -1,0 +1,45 @@
+- name: Check if /etc/docker/daemon.json exists
+  stat:
+    path: /etc/docker/daemon.json
+  register: daemon_file_exists
+
+- name: Create /etc/docker/daemon.json file
+  file: path=/etc/docker/daemon.json
+    owner=root
+    state={{ "file" if  daemon_file_exists.stat.exists else "touch"}}
+
+- name: Check daemon.json configuration
+  shell: grep -c "native.cgroupdriver=systemd" /etc/docker/daemon.json || false
+  register: daemon_config_exists
+  failed_when: false
+
+- name: Configure docker daemon.json
+  blockinfile:
+    path: /etc/docker/daemon.json
+    create: yes
+    marker_begin: ""
+    marker_end: ""
+    marker: ""
+    block: |
+      {
+        "exec-opts": ["native.cgroupdriver=systemd"],
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m"
+        },
+        "storage-driver": "overlay2"
+      }
+  when: daemon_config_exists.rc > 0
+  # notify:
+  #   - docker_restart
+  register: docker_restart_required
+
+# workaround because handlers exection failure while using vagrant
+- name: docker_restart
+  shell: sleep 2 && systemctl daemon-reload && systemctl stop docker && systemctl stop docker
+  when: docker_restart_required.changed
+
+- name: Add vagrant user to docker group
+  user:
+    name: vagrant
+    group: docker

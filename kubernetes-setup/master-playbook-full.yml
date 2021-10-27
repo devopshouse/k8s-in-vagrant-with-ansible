@@ -1,0 +1,223 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: print ip addr
+      debug:
+        var: ansible_eth1.ipv4.address
+      changed_when: true
+      notify:
+        - teste
+
+    - name: Configure network modules
+      blockinfile:
+        path: /etc/modules-load.d/k8s.conf
+        create: yes
+        block: |
+          br_netfilter
+          overlay
+
+    - name: Configure kernel parameters
+      blockinfile:
+        path: /etc/sysctl.d/k8s.conf
+        create: yes
+        block: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+      notify:
+        - reload_sysctl
+
+    - name: Install packages that allow apt to be used over HTTPS
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+
+    - name: Add an apt signing key for Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add apt repository for stable version
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Install docker and its dependecies
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+        install_recommends: no
+      vars:
+        packages:
+          - docker-ce
+          - docker-ce-cli
+          - docker-scan-plugin
+          - containerd.io
+
+    - name: Check if /etc/docker/daemon.json exists
+      stat:
+        path: /etc/docker/daemon.json
+      register: daemon_file_exists
+
+    - name: Create /etc/docker/daemon.json file
+      file: path=/etc/docker/daemon.json
+        owner=root
+        state={{ "file" if  daemon_file_exists.stat.exists else "touch"}}
+
+    - name: Check daemon.json configuration
+      shell: grep -c "native.cgroupdriver=systemd" /etc/docker/daemon.json || false
+      register: daemon_config_exists
+      failed_when: false
+
+    - name: Configure docker daemon.json
+      blockinfile:
+        path: /etc/docker/daemon.json
+        create: yes
+        marker_begin: ""
+        marker_end: ""
+        marker: ""
+        block: |
+          {
+            "exec-opts": ["native.cgroupdriver=systemd"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m"
+            },
+            "storage-driver": "overlay2"
+          }
+      when: daemon_config_exists.rc > 0
+      notify:
+        - docker_restart
+
+    - name: Install docker-ce-rootless-extras
+      apt:
+        name: docker-ce-rootless-extras
+        state: present
+        update_cache: yes
+
+    - name: Add vagrant user to docker group
+      user:
+        name: vagrant
+        group: docker
+
+    - name: Remove swapfile from /etc/fstab
+      mount:
+        name: "{{ item }}"
+        fstype: swap
+        state: absent
+      with_items:
+        - swap
+        - none
+
+    - name: Disable swap
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Add an apt signing key for Kubernetes
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Adding apt repository for Kubernetes
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+        filename: kubernetes.list
+
+    - name: Install Kubernetes binaries
+      apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - kubelet
+          - kubeadm
+          - kubectl
+
+    - name: Hold kubeadm
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      with_items:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    - name: Check if kubernetes cluster is running fine
+      shell: kubectl get nodes || false
+      register: get_node_command
+      failed_when: false
+
+    - name: Check previous createad kubelet
+      stat:
+        path: /etc/kubernetes/manifests/etcd.yaml
+      register: stat_result
+      ignore_errors: True
+
+    - name: Reset Kubernetes cluster if previous instalation is found
+      command: kubeadm reset -f
+      when: (stat_result.stat.exists) and (get_node_command.rc > 0)
+
+    - name: Initialize the Kubernetes cluster using kubeadm
+      command: kubeadm init --pod-network-cidr=192.168.0.0/16
+      when: not get_node_command.rc == 0
+
+    - name: Create .kube directory for vagrant and root
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - /home/vagrant/.kube
+        - /root/.kube
+
+    - name: Copy kubectl config into .kube folder to root and vagrant users
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ item }}/config"
+        remote_src: yes
+      with_items:
+        - /home/vagrant/.kube
+        - /root/.kube
+
+    - name: Recursively change ownership of /home/vagrant/.kube directory
+      file:
+        path: /home/vagrant/.kube
+        state: directory
+        recurse: yes
+        owner: vagrant
+        group: vagrant
+
+    - name: Install calico pod network
+      become: false
+      command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      when: not get_node_command.rc == 0
+
+    - name: Generate join command
+      command: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: Copy join command to local file
+      become: false
+      local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
+
+  handlers:
+    - name: reload_sysctl
+      shell: sysctl --system
+
+    - name: docker_restart
+      command: systemctl daemon-reload; systemctl restart docker
+
+    - name: teste
+      debug:
+        msg: "Oiiiiiiiiii"

@@ -1,0 +1,7 @@
+---
+# tasks file for configure-master
+- include: 01-cluster-config.yml
+- include: 02-kubectl-config.yml
+- include: 03-cni-config.yml
+- include: 04-lb-config.yml
+- include: 05-generate-join-token.yml

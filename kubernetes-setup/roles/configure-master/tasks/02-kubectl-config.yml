@@ -1,0 +1,24 @@
+- name: Create .kube directory for vagrant and root
+  file:
+    path: "{{ item }}"
+    state: directory
+  with_items:
+    - /home/vagrant/.kube
+    - /root/.kube
+
+- name: Copy kubectl config into .kube folder to root and vagrant users
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ item }}/config"
+    remote_src: yes
+  with_items:
+    - /home/vagrant/.kube
+    - /root/.kube
+
+- name: Recursively change ownership of /home/vagrant/.kube directory
+  file:
+    path: /home/vagrant/.kube
+    state: directory
+    recurse: yes
+    owner: vagrant
+    group: vagrant

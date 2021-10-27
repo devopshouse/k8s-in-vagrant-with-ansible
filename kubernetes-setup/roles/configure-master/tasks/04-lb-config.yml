@@ -1,0 +1,38 @@
+- name: Check if kubernetes cluster is running fine
+  shell: kubectl get po -n metallb-system |grep controller | grep 1/1
+  register: is_metal_controller_runnning
+  failed_when: false
+
+- name: Configure Metal LB config map
+  blockinfile:
+    path: /tmp/metal-lb-config-map.yaml
+    create: yes
+    block: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        namespace: metallb-system
+        name: config
+      data:
+        config: |
+          address-pools:
+          - name: default
+            protocol: layer2
+            addresses:
+              - {{ lb_address_pool }}
+  when: not is_metal_controller_runnning.rc == 0
+
+- name: Apply metal lb namespace manifest
+  become: false
+  command: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.10.2/manifests/namespace.yaml
+  when: not is_metal_controller_runnning.rc == 0
+
+- name: Apply metal lb config map manifest
+  become: false
+  command: kubectl apply -f /tmp/metal-lb-config-map.yaml
+  when: not is_metal_controller_runnning.rc == 0
+
+- name: Apply metal lb core manifest
+  become: false
+  command: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.10.2/manifests/metallb.yaml
+  when: not is_metal_controller_runnning.rc == 0

@@ -1,0 +1,4 @@
+---
+# handlers file for install-docker
+- name: docker_restart
+  shell: sleep 2 && systemctl daemon-reload && systemctl stop docker && systemctl stop docker
