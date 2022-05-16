@@ -5,9 +5,9 @@
     update_cache: yes
   vars:
     packages:
-      - kubelet
-      - kubeadm
-      - kubectl
+      - kubelet=1.22.0-00
+      - kubeadm=1.22.0-00
+      - kubectl=1.22.0-00
 
 - name: Hold kubeadm
   dpkg_selections:
